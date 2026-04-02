@@ -19,15 +19,8 @@ let selectedPlanTon = null;
 let currentOrderId = null;
 let verificationInterval = null;
 
-// Backend URL Configuration
-function getBackendUrl() {
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        return 'http://localhost:5000';
-    }
-    return 'https://stars-backend.onrender.com';
-}
-
-const BACKEND_URL = getBackendUrl();
+// Backend URL - ثابت على localhost للتطوير
+const BACKEND_URL = 'http://localhost:5000';
 console.log('🔗 Backend URL:', BACKEND_URL);
 
 /* ============================================================
