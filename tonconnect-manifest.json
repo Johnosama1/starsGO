@@ -1,7 +1,7 @@
 {
   "url": "https://stars-go.vercel.app",
-  "name": "StarsGO",
-  "iconUrl": "https://stars-go.vercel.app/icon.png",
-  "termsOfUseUrl": "https://stars-go.vercel.app/terms",
-  "privacyPolicyUrl": "https://stars-go.vercel.app/privacy"
+  "name": "starGo",
+  "iconUrl": "https://stars-go.vercel.app/image.jpg",
+  "termsOfUseUrl": "https://stars-go.vercel.app/terms.html",
+  "privacyPolicyUrl": "https://stars-go.vercel.app/privacy.html"
 }
