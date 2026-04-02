@@ -1,6 +1,6 @@
 /* ============================================================
    starGo - Full JavaScript File
-   Version: 4.0 (Fixed TON Connect)
+   Version: 5.0 (With Backend Integration)
    Author: starGo Team
 ============================================================ */
 
@@ -16,6 +16,19 @@ let tonConnectUI = null;
 let windowTonPrice = null;
 let pendingVerification = null;
 let selectedPlanTon = null;
+let currentOrderId = null;
+let verificationInterval = null;
+
+// Backend URL Configuration
+function getBackendUrl() {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        return 'http://localhost:5000';
+    }
+    return 'https://stars-backend.onrender.com';
+}
+
+const BACKEND_URL = getBackendUrl();
+console.log('🔗 Backend URL:', BACKEND_URL);
 
 /* ============================================================
    Helper Functions
@@ -574,14 +587,37 @@ async function buyStars() {
         return;
     }
     
-    const tonAmount = (amount * TON_PER_STAR).toFixed(4);
-    const orderId = "ORD-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7).toUpperCase();
+    const tonAmount = (amount * TON_PER_STAR + FIXED_FEE).toFixed(6);
     
-    showNotification(`🔄 جاري معالجة طلب ${amount} نجمة...`, 'success');
+    showNotification(`🔄 جاري إنشاء طلب شراء ${amount} نجمة...`, 'success');
     
-    if (tonConnectUI && tonConnectUI.wallet) {
-        try {
-            const payload = base64Encode(`STARS_PURCHASE:${username}:${amount}:${orderId}:${Date.now()}`);
+    try {
+        const orderResponse = await fetch(`${BACKEND_URL}/api/order/stars`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                user_id: userData.telegram_id || '1',
+                recipient: username.replace('@', ''),
+                amount: amount,
+                ton_amount: tonAmount
+            })
+        });
+        
+        const orderData = await orderResponse.json();
+        
+        if (!orderData.success) {
+            showNotification('❌ فشل إنشاء الطلب: ' + orderData.message, 'error');
+            return;
+        }
+        
+        currentOrderId = orderData.data.order_id;
+        
+        showNotification(`💰 المطلوب: ${tonAmount} TON. جاري فتح المحفظة...`, 'success');
+        
+        if (tonConnectUI && tonConnectUI.wallet) {
+            const payload = base64Encode(`STARS:${orderData.data.order_id}:${username}:${amount}`);
             const messages = [{
                 address: RECEIVER_WALLET,
                 amount: toNano(tonAmount),
@@ -594,22 +630,17 @@ async function buyStars() {
                 messages: messages
             });
             
-            showNotification(`✅ تم شراء ${amount} نجمة بنجاح!`, 'success');
+            showNotification(`✅ تم إرسال المعاملة! جاري التأكيد...`, 'success');
             
-            saveOrder({
-                type: 'stars',
-                username: username,
-                amount: amount,
-                tonAmount: tonAmount,
-                orderId: orderId,
-                status: 'completed',
-                date: getFormattedDate()
-            });
+            startPaymentVerification(currentOrderId, amount, username);
             
-        } catch (error) {
-            console.error('Transaction error:', error);
-            showNotification('❌ فشل إتمام المعاملة', 'error');
+        } else {
+            showNotification('❌ المحفظة غير متصلة', 'error');
         }
+        
+    } catch (error) {
+        console.error('Buy stars error:', error);
+        showNotification('❌ فشل إتمام العملية', 'error');
     }
 }
 
@@ -678,13 +709,36 @@ async function buyPremium() {
     
     const tonAmount = selectedPlan.getAttribute('data-ton');
     const planName = selectedPlan.querySelector('span').innerText;
-    const orderId = "PRM-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7).toUpperCase();
     
-    showNotification(`🔄 جاري معالجة طلب ${planName}...`, 'success');
+    showNotification(`🔄 جاري إنشاء طلب شراء ${planName}...`, 'success');
     
-    if (tonConnectUI && tonConnectUI.wallet) {
-        try {
-            const payload = base64Encode(`PREMIUM_PURCHASE:${username}:${planName}:${orderId}:${Date.now()}`);
+    try {
+        const orderResponse = await fetch(`${BACKEND_URL}/api/order/premium`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                user_id: userData.telegram_id || '1',
+                recipient: username.replace('@', ''),
+                plan: planName,
+                ton_amount: tonAmount
+            })
+        });
+        
+        const orderData = await orderResponse.json();
+        
+        if (!orderData.success) {
+            showNotification('❌ فشل إنشاء الطلب: ' + orderData.message, 'error');
+            return;
+        }
+        
+        currentOrderId = orderData.data.order_id;
+        
+        showNotification(`💰 المطلوب: ${tonAmount} TON. جاري فتح المحفظة...`, 'success');
+        
+        if (tonConnectUI && tonConnectUI.wallet) {
+            const payload = base64Encode(`PREMIUM:${orderData.data.order_id}:${username}:${planName}`);
             const messages = [{
                 address: RECEIVER_WALLET,
                 amount: toNano(tonAmount),
@@ -697,23 +751,188 @@ async function buyPremium() {
                 messages: messages
             });
             
-            showNotification(`✅ تم شراء ${planName} بنجاح!`, 'success');
+            showNotification(`✅ تم إرسال المعاملة! جاري التأكيد...`, 'success');
             
-            saveOrder({
-                type: 'premium',
-                username: username,
-                plan: planName,
-                tonAmount: tonAmount,
-                orderId: orderId,
-                status: 'completed',
-                date: getFormattedDate()
-            });
+            startPremiumPaymentVerification(currentOrderId, planName, username);
+            
+        } else {
+            showNotification('❌ المحفظة غير متصلة', 'error');
+        }
+        
+    } catch (error) {
+        console.error('Buy premium error:', error);
+        showNotification('❌ فشل إتمام العملية', 'error');
+    }
+}
+
+/* ============================================================
+   Payment Verification Functions
+============================================================ */
+
+async function startPaymentVerification(orderId, starsAmount, username) {
+    if (verificationInterval) {
+        clearInterval(verificationInterval);
+    }
+    
+    let attempts = 0;
+    const maxAttempts = 60;
+    
+    showPaymentWaitingModal(orderId, starsAmount);
+    
+    verificationInterval = setInterval(async () => {
+        attempts++;
+        
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/order/check-payment/${orderId}`);
+            const data = await response.json();
+            
+            if (data.success && data.data?.status === 'completed') {
+                clearInterval(verificationInterval);
+                verificationInterval = null;
+                
+                updatePaymentStatus('completed', starsAmount);
+                
+                saveOrder({
+                    type: 'stars',
+                    username: username,
+                    amount: starsAmount,
+                    tonAmount: data.data.ton_amount,
+                    orderId: orderId,
+                    status: 'completed',
+                    date: getFormattedDate(),
+                    txHash: data.data.txHash
+                });
+                
+                showNotification(`✅ تم شراء ${starsAmount} نجمة بنجاح!`, 'success');
+                
+                setTimeout(() => {
+                    closePaymentModal();
+                }, 3000);
+                
+            } else if (attempts >= maxAttempts) {
+                clearInterval(verificationInterval);
+                verificationInterval = null;
+                updatePaymentStatus('timeout', starsAmount);
+                showNotification('⏰ انتهى وقت الانتظار. لم يتم استلام الدفع.', 'warning');
+            } else {
+                updatePaymentStatus('waiting', starsAmount, attempts);
+            }
             
         } catch (error) {
-            console.error('Transaction error:', error);
-            showNotification('❌ فشل إتمام المعاملة', 'error');
+            console.error('Check payment error:', error);
         }
+    }, 5000);
+}
+
+async function startPremiumPaymentVerification(orderId, planName, username) {
+    if (verificationInterval) {
+        clearInterval(verificationInterval);
     }
+    
+    let attempts = 0;
+    const maxAttempts = 60;
+    
+    showPaymentWaitingModal(orderId, planName);
+    
+    verificationInterval = setInterval(async () => {
+        attempts++;
+        
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/order/check-payment/${orderId}`);
+            const data = await response.json();
+            
+            if (data.success && data.data?.status === 'completed') {
+                clearInterval(verificationInterval);
+                verificationInterval = null;
+                
+                updatePaymentStatus('completed', planName);
+                
+                saveOrder({
+                    type: 'premium',
+                    username: username,
+                    plan: planName,
+                    tonAmount: data.data.ton_amount,
+                    orderId: orderId,
+                    status: 'completed',
+                    date: getFormattedDate(),
+                    txHash: data.data.txHash
+                });
+                
+                showNotification(`✅ تم شراء ${planName} بنجاح!`, 'success');
+                
+                setTimeout(() => {
+                    closePaymentModal();
+                }, 3000);
+                
+            } else if (attempts >= maxAttempts) {
+                clearInterval(verificationInterval);
+                verificationInterval = null;
+                updatePaymentStatus('timeout', planName);
+                showNotification('⏰ انتهى وقت الانتظار. لم يتم استلام الدفع.', 'warning');
+            } else {
+                updatePaymentStatus('waiting', planName, attempts);
+            }
+            
+        } catch (error) {
+            console.error('Check payment error:', error);
+        }
+    }, 5000);
+}
+
+function showPaymentWaitingModal(orderId, itemName) {
+    const existingModal = document.getElementById('paymentWaitingModal');
+    if (existingModal) existingModal.remove();
+    
+    const modal = document.createElement('div');
+    modal.id = 'paymentWaitingModal';
+    modal.innerHTML = `
+        <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; align-items: center; justify-content: center;">
+            <div style="background: #0a1622; border-radius: 20px; padding: 25px; max-width: 90%; width: 320px; text-align: center; border: 1px solid #2a4a6e;">
+                <i class="fas fa-spinner fa-pulse" style="font-size: 48px; color: #4dd0ff;"></i>
+                <h3 style="color: #fff; margin: 15px 0;">جاري معالجة الدفع</h3>
+                <p style="color: #9fb7d8; font-size: 14px;">المنتج: ${itemName}</p>
+                <p style="color: #9fb7d8; font-size: 12px;" id="paymentTimer">في انتظار تأكيد الدفع...</p>
+                <div style="background: #0d2130; border-radius: 10px; padding: 10px; margin-top: 15px;">
+                    <p style="color: #6c9ebf; font-size: 11px; margin: 0;">رقم الطلب</p>
+                    <p style="color: #ffd966; font-size: 11px; word-break: break-all; margin: 5px 0 0;">${orderId}</p>
+                </div>
+                <button onclick="closePaymentModal()" style="margin-top: 20px; background: #c0392b; border: none; padding: 10px 20px; border-radius: 10px; color: white; cursor: pointer;">
+                    <i class="fas fa-times"></i> إلغاء
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+function updatePaymentStatus(status, itemName, attempts = 0) {
+    const modal = document.getElementById('paymentWaitingModal');
+    if (!modal) return;
+    
+    const timerElement = modal.querySelector('#paymentTimer');
+    if (!timerElement) return;
+    
+    if (status === 'waiting') {
+        const elapsedSeconds = attempts * 5;
+        const minutes = Math.floor(elapsedSeconds / 60);
+        const seconds = elapsedSeconds % 60;
+        timerElement.innerHTML = `⏳ في انتظار الدفع... ${minutes}:${seconds.toString().padStart(2, '0')}`;
+    } else if (status === 'completed') {
+        timerElement.innerHTML = `✅ تم تأكيد الدفع! جاري إضافة ${itemName}...`;
+        timerElement.style.color = '#00c853';
+    } else if (status === 'timeout') {
+        timerElement.innerHTML = `❌ لم يتم استلام الدفع. انتهى وقت الانتظار.`;
+        timerElement.style.color = '#ff5555';
+    }
+}
+
+function closePaymentModal() {
+    if (verificationInterval) {
+        clearInterval(verificationInterval);
+        verificationInterval = null;
+    }
+    const modal = document.getElementById('paymentWaitingModal');
+    if (modal) modal.remove();
 }
 
 function saveOrder(order) {
@@ -748,7 +967,6 @@ function setVHVariable() {
 document.addEventListener('DOMContentLoaded', function() {
     console.log('✅ DOM loaded, initializing...');
     
-    // Initialize
     fetchTonPrice();
     setInterval(fetchTonPrice, 30000);
     refreshLoginUI();
@@ -756,7 +974,6 @@ document.addEventListener('DOMContentLoaded', function() {
     detectDeviceType();
     setVHVariable();
     
-    // Tab switching
     document.querySelectorAll(".tab-btn").forEach(btn => {
         btn.addEventListener("click", () => {
             const tab = btn.getAttribute("data-tab");
@@ -764,21 +981,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Wallet buttons
     const connectBtn = document.getElementById("connectTonWalletBtn");
     if (connectBtn) connectBtn.addEventListener("click", connectTonWallet);
     
     const disconnectBtn = document.getElementById("disconnectWalletBtn");
     if (disconnectBtn) disconnectBtn.addEventListener("click", disconnectWallet);
     
-    // Hamburger menu
     const hamburger = document.querySelector(".hamburger");
     if (hamburger) hamburger.addEventListener("click", toggleSidebar);
     
     const overlay = document.getElementById("overlay");
     if (overlay) overlay.addEventListener("click", closeSidebar);
     
-    // Stars section
     const usernameSubmit = document.getElementById("username-submit");
     if (usernameSubmit) usernameSubmit.addEventListener("click", checkUser);
     
@@ -791,7 +1005,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const starsContinueBtn = document.getElementById("stars-continue-btn");
     if (starsContinueBtn) starsContinueBtn.addEventListener("click", buyStars);
     
-    // Packages
     document.querySelectorAll(".package").forEach(pkg => {
         pkg.addEventListener("click", function(e) {
             const amount = this.getAttribute("data-amount");
@@ -800,7 +1013,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Premium section
     const premiumSubmit = document.getElementById("premium-username-submit");
     if (premiumSubmit) premiumSubmit.addEventListener("click", checkPremiumUser);
     
@@ -810,7 +1022,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const premiumContinueBtn = document.getElementById("premium-continue-btn");
     if (premiumContinueBtn) premiumContinueBtn.addEventListener("click", buyPremium);
     
-    // Plans
     document.querySelectorAll(".plan").forEach(plan => {
         plan.addEventListener("click", function(e) {
             const ton = this.getAttribute("data-ton");
@@ -819,7 +1030,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Login
     const loginSendBtn = document.getElementById('login-send');
     if (loginSendBtn) loginSendBtn.addEventListener('click', sendVerificationCode);
     
@@ -836,7 +1046,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const closeLoginBtn = document.getElementById('closeLoginBtn');
     if (closeLoginBtn) closeLoginBtn.addEventListener('click', closeLogin);
     
-    // Logout
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.addEventListener('click', confirmLogout);
     
@@ -846,18 +1055,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const cancelLogoutBtn = document.getElementById('cancelLogoutBtn');
     if (cancelLogoutBtn) cancelLogoutBtn.addEventListener('click', closeConfirmPopup);
     
-    // Close modals with ESC
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeSidebar();
             closeLogin();
             closeConfirmPopup();
+            closePaymentModal();
             const walletModal = document.querySelector('.ton-connect-modal');
             if (walletModal) walletModal.style.display = 'none';
         }
     });
     
-    // Prevent scroll on modals
     const modals = ['login-popup', 'logout-confirm-popup'];
     modals.forEach(modalId => {
         const modal = document.getElementById(modalId);
@@ -868,12 +1076,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // Window resize
     window.addEventListener('resize', setVHVariable);
     window.addEventListener('orientationchange', () => setTimeout(setVHVariable, 100));
 });
 
-// Make functions global
 window.connectTonWallet = connectTonWallet;
 window.disconnectWallet = disconnectWallet;
 window.openLogin = openLogin;
@@ -895,3 +1101,4 @@ window.selectPremiumPlan = selectPremiumPlan;
 window.calculateCustomAmount = calculateCustomAmount;
 window.sendVerificationCode = sendVerificationCode;
 window.verifyCode = verifyCode;
+window.closePaymentModal = closePaymentModal;
